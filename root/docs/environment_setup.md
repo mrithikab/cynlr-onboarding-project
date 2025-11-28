@@ -11,8 +11,7 @@
 - OS: Windows 11 PRO 64-bit
 
 ## Tools and Extensions
-- VS Code 2022
-    - Microsoft C++ Extension Pack(c/c++ language support, debugging, IntelliSense).
+- Visual Studio 2022
 - Compiler: MSYS2 MinGW-w64 GCC (g++ 15.2.0)
 - Git: Git CLI with a remote repository on GitHub for version control and code reviews    
 
