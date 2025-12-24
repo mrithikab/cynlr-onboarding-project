@@ -1,4 +1,3 @@
-
 #include "stream/CsvStreamer.h"
 #include <algorithm>
 #include <cctype>
@@ -68,4 +67,23 @@ bool CsvStreamer::nextPair(uint8_t& a, uint8_t& b) {
     }
 
     return true;
+}
+
+int CsvStreamer::probeColumns(const std::string& path) {
+    std::ifstream in(path);
+    if (!in) return 0;
+
+    std::string line;
+    while (std::getline(in, line)) {
+        // trim whitespace
+        auto not_ws = [](int ch) { return !std::isspace(ch); };
+        auto first = std::find_if(line.begin(), line.end(), not_ws);
+        if (first == line.end()) continue; // empty line
+
+        // count commas -> columns = commas+1
+        int commas = 0;
+        for (char c : line) if (c == ',') ++commas;
+        return commas + 1;
+    }
+    return 0;
 }

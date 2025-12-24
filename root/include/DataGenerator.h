@@ -4,12 +4,15 @@
 #include <vector>
 #include <string>
 #include "ThreadSafeQueue.h"
+
 enum class InputMode {
     RANDOM,
     CSV
 };
-int probeCSVColumns(const std::string& filePath);
-// DataPair: initialize members to silence C26495 and make values deterministic.
+
+//int probeCSVColumns(const std::string& filePath);
+
+// DataPair: two 8-bit samples plus timestamps and sequence number.
 struct DataPair {
     uint8_t a = 0;
     uint8_t b = 0;
@@ -28,24 +31,18 @@ public:
     void start();
     void stop();
 
-    // Query whether generator thread is running (useful to detect EOF termination)
     bool isRunning() const noexcept { return running.load(std::memory_order_acquire); }
 
 private:
     void run();
 
-    // NOTE: CSV is streamed from file in run(); we do not keep the whole file in memory.
     ThreadSafeQueue<DataPair>* queue;
     std::thread worker;
     std::atomic<bool> running;
 
-    int columns;                 // m
-    uint64_t T_ns;               // process time
+    int columns;
+    uint64_t T_ns;
     InputMode mode;
-
-    // CSV-related: store file path only (streamed at run-time)
     std::string csvFile;
-
-    // Sequence counter for diagnostics
     uint64_t seqCounter = 0;
 };
