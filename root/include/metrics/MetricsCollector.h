@@ -1,4 +1,3 @@
-
 #pragma once
 #include <cstdint>
 
@@ -9,8 +8,10 @@ public:
     virtual ~MetricsCollector() = default;
 
     // Record one pair's timestamps and derived metrics.
+    // Added gen_ts_valid to explicitly indicate whether gen_ts_ns is set.
     virtual void recordPair(uint64_t seq,
                             uint64_t gen_ts_ns,
+                            bool gen_ts_valid,
                             uint64_t pop_ts_ns,
                             uint64_t proc_start_ns,
                             uint64_t out0_ts_ns,

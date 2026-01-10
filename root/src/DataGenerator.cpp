@@ -85,6 +85,7 @@ void DataGenerator::run() {
             pair.gen_ts_ns = static_cast<uint64_t>(
                 std::chrono::duration_cast<std::chrono::nanoseconds>(
                     std::chrono::steady_clock::now().time_since_epoch()).count());
+            pair.gen_ts_valid = true; // NEW: mark timestamp as valid
             pair.seq = seqCounter++;
 
             int attempts = 0;
@@ -191,6 +192,7 @@ void DataGenerator::run() {
                         pair.gen_ts_ns = static_cast<uint64_t>(
                             std::chrono::duration_cast<std::chrono::nanoseconds>(
                                 std::chrono::steady_clock::now().time_since_epoch()).count());
+                        pair.gen_ts_valid = true; // NEW: mark timestamp as valid
                         pair.seq = seqCounter++;
 
                         int attempts = 0;

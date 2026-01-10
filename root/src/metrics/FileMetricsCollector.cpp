@@ -1,8 +1,8 @@
-
 #include "metrics/MetricsCollector.h"
 #include <fstream>
 #include <mutex>
 #include <iostream>
+#include <string>
 
 class FileMetricsCollector : public MetricsCollector {
 public:
@@ -11,7 +11,8 @@ public:
     {
         file_.open(file_path_, std::ofstream::out | std::ofstream::trunc);
         if (file_.is_open()) {
-            file_ << "seq,gen_ts_ns,pop_ts_ns,proc_start_ns,out0_ts_ns,out1_ts_ns,"
+            // Include gen_ts_valid column so consumers can distinguish unset timestamps.
+            file_ << "seq,gen_ts_ns,gen_ts_valid,pop_ts_ns,proc_start_ns,out0_ts_ns,out1_ts_ns,"
                      "queue_latency_ns,proc0_ns,proc1_ns,inter_output_delta_ns\n";
         } else {
             std::cerr << "FileMetricsCollector: failed to open " << file_path_ << "\n";
@@ -25,6 +26,7 @@ public:
 
     void recordPair(uint64_t seq,
                     uint64_t gen_ts_ns,
+                    bool gen_ts_valid,
                     uint64_t pop_ts_ns,
                     uint64_t proc_start_ns,
                     uint64_t out0_ts_ns,
@@ -36,9 +38,17 @@ public:
     {
         std::lock_guard<std::mutex> lk(mutex_);
         if (!file_.is_open()) return;
-        file_ << seq << ',' << gen_ts_ns << ',' << pop_ts_ns << ',' << proc_start_ns
-              << ',' << out0_ts_ns << ',' << out1_ts_ns << ','
-              << queue_latency_ns << ',' << proc0_ns << ',' << proc1_ns << ',' << inter_output_delta_ns << '\n';
+        file_ << seq << ','
+              << gen_ts_ns << ','
+              << (gen_ts_valid ? '1' : '0') << ','
+              << pop_ts_ns << ','
+              << proc_start_ns << ','
+              << out0_ts_ns << ','
+              << out1_ts_ns << ','
+              << queue_latency_ns << ','
+              << proc0_ns << ','
+              << proc1_ns << ','
+              << inter_output_delta_ns << '\n';
     }
 
     void flush() override {

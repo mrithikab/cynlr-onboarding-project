@@ -1,0 +1,26 @@
+# Visual Studio
+.vs/
+*.vcxproj.user
+*.user
+*.suo
+
+# Build outputs
+Debug/
+Release/
+x64/
+bin/
+obj/
+cynlr-on.*/
+
+# Metrics / profiling outputs
+*.csv
+pair_metrics.csv
+module_profile.csv
+
+# Temp files
+*.tmp
+TextFile1.txt
+
+# OS
+.DS_Store
+Thumbs.db

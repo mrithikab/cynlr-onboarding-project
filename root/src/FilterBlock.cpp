@@ -108,8 +108,8 @@ void FilterBlock::run() {
                 buf_idx = (buf_idx + 1) % 9;
                 if (buf_count < 9) ++buf_count;
                 if (buf_count >= 9) {
-                    int window_start = (buf_idx + 4) % 9;
-                    volatile double filtered = applyFilterWindowAt(window_start);
+                    //int window_start = (buf_idx + 4) % 9;
+                    volatile double filtered = applyFilterWindowAt(buf_idx);
                     (void)filtered;
                     ++totalOutputs;
                 }
@@ -121,7 +121,7 @@ void FilterBlock::run() {
         uint64_t proc_start = now_ns();
 
         uint64_t queue_latency = 0;
-        if (pair.gen_ts_ns != 0) {
+        if (pair.gen_ts_valid) { // CHANGED: use explicit validity flag
             queue_latency = proc_start > pair.gen_ts_ns ? (proc_start - pair.gen_ts_ns) : 0;
             ++totalPairsProcessed;
             sum_queue_latency_ns += queue_latency;
@@ -164,7 +164,8 @@ void FilterBlock::run() {
             uint64_t proc0 = produced0 ? (out0_ts > proc_start ? out0_ts - proc_start : 0) : 0;
             uint64_t proc1 = produced1 ? (out1_ts > proc_start ? out1_ts - proc_start : 0) : 0;
             uint64_t inter = (produced0 && produced1) ? (out1_ts > out0_ts ? out1_ts - out0_ts : 0) : 0;
-            metrics->recordPair(pair.seq, pair.gen_ts_ns, pop_ts, proc_start,
+            // Pass explicit gen_ts_valid flag so collectors can distinguish "unset" from real 0.
+            metrics->recordPair(pair.seq, pair.gen_ts_ns, pair.gen_ts_valid, pop_ts, proc_start,
                                 out0_ts, out1_ts, queue_latency, proc0, proc1, inter);
         }
 

@@ -10,13 +10,12 @@ enum class InputMode {
     CSV
 };
 
-//int probeCSVColumns(const std::string& filePath);
-
 // DataPair: two 8-bit samples plus timestamps and sequence number.
 struct DataPair {
     uint8_t a = 0;
     uint8_t b = 0;
     uint64_t gen_ts_ns = 0;
+    bool gen_ts_valid = false; // NEW: explicitly indicate whether gen_ts_ns is valid
     uint64_t seq = 0;
 };
 
