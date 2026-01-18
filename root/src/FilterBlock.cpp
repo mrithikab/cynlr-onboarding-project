@@ -1,11 +1,24 @@
+//filterblock.cpp
 #include "FilterBlock.h"
-#include "profiler/ModuleProfiler.h"
+
+#include "Util.h"
+
 #include <iostream>
 #include <chrono>
 #include <limits>
+#include <algorithm>
 #include <fstream>
+#include <cmath>
+#include <cassert>
 
-static constexpr double KERNEL[9] = {
+// ========================
+// FIR configuration
+// ========================
+
+static constexpr int    TAPS = 9;
+static constexpr int    CENTER = TAPS / 2;
+
+static constexpr double KERNEL[TAPS] = {
     0.00025177,
     0.008666992,
     0.078025818,
@@ -17,187 +30,301 @@ static constexpr double KERNEL[9] = {
     0.000125885
 };
 
-static constexpr bool verbose = false;
+static bool isValidNumber(double v) {
+    return std::isfinite(v) && !std::isnan(v);
+}
 
-FilterBlock::FilterBlock(int m,
+// ========================
+// Construction / lifecycle
+// ========================
+
+FilterBlock::FilterBlock(
+    int m,
     double threshold,
     ThreadSafeQueue<DataPair>* q,
-    MetricsCollector* metrics_)
-    : columns(m),
-    TV(threshold),
-    queue(q),
+    MetricsCollector* metrics_,
+    bool useFileKernel,
+    const std::string& kernelFile)
+    : worker(),
     running(false),
     ready(false),
+    queue(q),
+    metrics(metrics_),
+    circ_buf{},
     buf_idx(0),
-    buf_count(9),
+    buf_count(0),
+    TV(threshold),
+    columns(m),
     currentColumn(0),
     totalPairsProcessed(0),
-    totalOutputs(0),
     sum_queue_latency_ns(0),
     min_queue_latency_ns(std::numeric_limits<uint64_t>::max()),
     max_queue_latency_ns(0),
-    sum_processing_ns(0),
-    min_processing_ns(std::numeric_limits<uint64_t>::max()),
-    max_processing_ns(0),
-    metrics(metrics_)
+    profiler_("FilterBlock", 100000),
+    totalQueueSizeSamples(0),
+    minQueueSize(std::numeric_limits<uint64_t>::max()),
+    maxQueueSize(0),
+    queueSizeSampleCount(0)
 {
-    for (int i = 0; i < 9; ++i) circ_buf[i] = 0.0;
+    // Default: use built-in kernel
+    for (int i = 0; i < TAPS; ++i) fir_kernel[i] = KERNEL[i];
+    if (useFileKernel && !kernelFile.empty()) {
+        if (!loadKernelFromFile(kernelFile)) {
+            std::cerr << "[FilterBlock] Failed to load kernel from file. Using default kernel.\n";
+        }
+    }
 }
 
-void FilterBlock::start() {
+bool FilterBlock::loadKernelFromFile(const std::string& path) {
+    std::ifstream in(path);
+    if (!in) {
+        std::cerr << "[FilterBlock] Kernel file not found: " << path << "\n";
+        return false;
+    }
+    double vals[TAPS];
+    int count = 0;
+    while (in && count < TAPS) {
+        double v;
+        in >> v;
+        if (in.fail()) {
+            std::cerr << "[FilterBlock] Error: Non-numeric value in kernel file.\n";
+            return false;
+        }
+        if (!isValidNumber(v)) {
+            std::cerr << "[FilterBlock] Error: NaN or Inf in kernel file.\n";
+            return false;
+        }
+        vals[count++] = v;
+    }
+    double dummy;
+    if (in >> dummy) {
+        std::cerr << "[FilterBlock] Error: More than " << TAPS << " values in kernel file.\n";
+        return false;
+    }
+    if (count != TAPS) {
+        std::cerr << "[FilterBlock] Error: Expected " << TAPS << " values, got " << count << ".\n";
+        return false;
+    }
+    for (int i = 0; i < TAPS; ++i) fir_kernel[i] = vals[i];
+    std::cout << "[FilterBlock] Loaded kernel from file: " << path << "\n";
+    return true;
+}
+
+void FilterBlock::start()
+{
     running = true;
+    profiler_.startBlock(util::now_ns());
     worker = std::thread(&FilterBlock::run, this);
 }
 
-void FilterBlock::stop() {
+void FilterBlock::stop()
+{
     running = false;
-    if (queue) queue->shutdown();
+
+    if (queue)
+        queue->shutdown();
 
     if (worker.joinable())
         worker.join();
 
-    if (metrics) metrics->flush();
+    profiler_.stopBlock(util::now_ns());
 
-    printStats();
+    if (metrics)
+        metrics->flush();
 }
 
-// Compute filter on 9-point window starting at startIndex
-double FilterBlock::applyFilterWindowAt(int startIndex) const {
+// ========================
+// FIR core
+// ========================
+
+inline void FilterBlock::pushSample(double sample)
+{
+    circ_buf[buf_idx] = sample;
+    buf_idx = (buf_idx + 1) % TAPS;
+
+    if (buf_count < TAPS)
+        ++buf_count;
+}
+
+double FilterBlock::applyCurrentWindow() const
+{
     double sum = 0.0;
-    for (int i = 0; i < 9; ++i) {
-        int idx = startIndex + i;
-        if (idx >= 9) idx -= 9;
-        sum += circ_buf[idx] * KERNEL[i];
+    int idx = buf_idx;
+    for (int i = 0; i < TAPS; ++i)
+    {
+        sum += circ_buf[idx] * fir_kernel[i];
+        if (++idx == TAPS) idx = 0;
     }
     return sum;
 }
 
-static uint64_t now_ns() {
-    return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count());
+inline bool FilterBlock::processSample(double sample, uint64_t proc_start, uint64_t& out_ts)
+{
+    pushSample(sample);
+
+    if (buf_count < TAPS)
+        return false;
+
+    double filtered = applyCurrentWindow();
+    int output = (filtered >= TV) ? 1 : 0;
+    out_ts = util::now_ns();
+    (void)output;
+
+    currentColumn = (currentColumn + 1) % columns;
+
+    return true;
 }
 
-void FilterBlock::run() {
-    // Mark consumer ready for handshake
+void FilterBlock::flushWithZeros()
+{
+    for (int i = 0; i < CENTER; ++i)
+    {
+        uint64_t dummy_ts = 0;
+        processSample(0.0, util::now_ns(), dummy_ts);
+    }
+}
+
+// ========================
+// Worker thread
+// ========================
+
+void FilterBlock::run()
+{
     ready.store(true, std::memory_order_release);
 
-    while (true) {
+    while (true)
+    {
         DataPair pair;
-        bool ok = queue->pop(pair);
-        if (!ok) {
-            // queue shutdown and empty -> post-pad with zeros to flush outputs
-            for (int i = 0; i < 8; ++i) {
-                circ_buf[buf_idx] = 0.0;
-                buf_idx = (buf_idx + 1) % 9;
-                if (buf_count < 9) ++buf_count;
-                if (buf_count >= 9) {
-                    int window_start = (buf_idx + 4) % 9;
-                    volatile double filtered = applyFilterWindowAt(window_start);
-                    (void)filtered;
-                    ++totalOutputs;
-                }
+
+        while (!queue->try_pop(pair)) {
+            if (queue->isShutdown()) {
+                flushWithZeros();
+                ready.store(false, std::memory_order_release);
+                return;
             }
+            util::cpu_relax();
+        }
+
+        if (pair.seq == std::numeric_limits<uint64_t>::max())
+        {
+            flushWithZeros();
             break;
         }
 
-        // Treat special seq value as termination sentinel
-        if (pair.seq == std::numeric_limits<uint64_t>::max()) {
-            for (int i = 0; i < 8; ++i) {
-                circ_buf[buf_idx] = 0.0;
-                buf_idx = (buf_idx + 1) % 9;
-                if (buf_count < 9) ++buf_count;
-                if (buf_count >= 9) {
-                    //int window_start = (buf_idx + 4) % 9;
-                    volatile double filtered = applyFilterWindowAt(buf_idx);
-                    (void)filtered;
-                    ++totalOutputs;
-                }
-            }
-            break;
-        }
+        size_t qsize = queue->size();
+        totalQueueSizeSamples += qsize;
+        ++queueSizeSampleCount;
+        minQueueSize = std::min(minQueueSize, (uint64_t)qsize);
+        maxQueueSize = std::max(maxQueueSize, (uint64_t)qsize);
 
-        uint64_t pop_ts = now_ns();
-        uint64_t proc_start = now_ns();
+        uint64_t pop_ts = util::now_ns();
+        uint64_t proc_start = util::now_ns();
 
         uint64_t queue_latency = 0;
-        if (pair.gen_ts_valid) { // CHANGED: use explicit validity flag
-            queue_latency = proc_start > pair.gen_ts_ns ? (proc_start - pair.gen_ts_ns) : 0;
+        if (pair.gen_ts_valid)
+        {
+            assert(proc_start >= pair.gen_ts_ns && "proc_start < gen_ts_ns: possible timestamp bug");
+            queue_latency = proc_start > pair.gen_ts_ns
+                ? proc_start - pair.gen_ts_ns
+                : 0;
+
             ++totalPairsProcessed;
             sum_queue_latency_ns += queue_latency;
-            if (queue_latency < min_queue_latency_ns) min_queue_latency_ns = queue_latency;
-            if (queue_latency > max_queue_latency_ns) max_queue_latency_ns = queue_latency;
+            min_queue_latency_ns = std::min(min_queue_latency_ns, queue_latency);
+            max_queue_latency_ns = std::max(max_queue_latency_ns, queue_latency);  
         }
-
-        auto process_sample = [&](double sample, uint64_t& out_ts) -> bool {
-            circ_buf[buf_idx] = sample;
-            buf_idx = (buf_idx + 1) % 9;
-            if (buf_count < 9) ++buf_count;
-
-            if (buf_count >= 9) {
-                ModuleProfiler::ScopedTimer tm("FilterBlock.process_sample");
-
-                int window_start = (buf_idx + 4) % 9;
-                double filtered = applyFilterWindowAt(window_start);
-
-                out_ts = now_ns();
-                int output = (filtered >= TV) ? 1 : 0;
-
-                currentColumn = (currentColumn + 1) % columns;
-
-                uint64_t compute_time = out_ts > proc_start ? (out_ts - proc_start) : 0;
-                sum_processing_ns += compute_time;
-                ++totalOutputs;
-                if (compute_time < min_processing_ns) min_processing_ns = compute_time;
-                if (compute_time > max_processing_ns) max_processing_ns = compute_time;
-                (void)output;
-                return true;
-            }
-            return false;
-        };
 
         uint64_t out0_ts = 0, out1_ts = 0;
-        bool produced0 = process_sample(static_cast<double>(pair.a), out0_ts);
-        bool produced1 = process_sample(static_cast<double>(pair.b), out1_ts);
+        bool produced0 = processSample(static_cast<double>(pair.a), proc_start, out0_ts);
+        bool produced1 = processSample(static_cast<double>(pair.b), proc_start, out1_ts);
 
-        if (metrics) {
-            uint64_t proc0 = produced0 ? (out0_ts > proc_start ? out0_ts - proc_start : 0) : 0;
-            uint64_t proc1 = produced1 ? (out1_ts > proc_start ? out1_ts - proc_start : 0) : 0;
-            uint64_t inter = (produced0 && produced1) ? (out1_ts > out0_ts ? out1_ts - out0_ts : 0) : 0;
-            // Pass explicit gen_ts_valid flag so collectors can distinguish "unset" from real 0.
-            metrics->recordPair(pair.seq, pair.gen_ts_ns, pair.gen_ts_valid, pop_ts, proc_start,
-                                out0_ts, out1_ts, queue_latency, proc0, proc1, inter);
+        if (produced1) {
+            uint64_t proc1 = out1_ts - proc_start;
+            profiler_.recordSample(proc1);  
         }
 
-        if (verbose) {
-            uint64_t proc0 = produced0 ? (out0_ts > proc_start ? out0_ts - proc_start : 0) : 0;
-            uint64_t proc1 = produced1 ? (out1_ts > proc_start ? out1_ts - proc_start : 0) : 0;
-            uint64_t inter = (produced0 && produced1) ? (out1_ts > out0_ts ? out1_ts - out0_ts : 0) : 0;
-            std::cout << pair.seq << ',' << pair.gen_ts_ns << ',' << pop_ts << ',' << proc_start
-                << ',' << out0_ts << ',' << out1_ts << ','
-                << queue_latency << ',' << proc0 << ',' << proc1 << ',' << inter << '\n';
+        if (metrics)
+        {
+            uint64_t proc0 = produced0 ? (out0_ts - proc_start) : 0;
+            uint64_t proc1 = produced1 ? (out1_ts - proc_start) : 0;
+            uint64_t inter = (produced0 && produced1) ? (out1_ts - out0_ts) : 0;
+
+            metrics->recordPair(
+                pair.seq,
+                pair.gen_ts_ns,
+                pair.gen_ts_valid,
+                pop_ts,
+                proc_start,
+                out0_ts,
+                out1_ts,
+                queue_latency,
+                proc0,
+                proc1,
+                inter);
         }
     }
 
     ready.store(false, std::memory_order_release);
 }
 
-void FilterBlock::printStats() {
+// ========================
+// Stats
+// ========================
+
+void FilterBlock::printStats() const
+{
     std::cout << "---- FilterBlock statistics ----\n";
-    std::cout << "Pairs processed: " << totalPairsProcessed << "\n";
-    std::cout << "Outputs produced: " << totalOutputs << "\n";
-    if (totalPairsProcessed > 0) {
-        double avg_queue = static_cast<double>(sum_queue_latency_ns) / totalPairsProcessed;
+    std::cout << "Pairs processed:  " << totalPairsProcessed << "\n";
+    
+    // Get profiler stats
+    auto stats = profiler_.getStats();
+    std::cout << "Outputs produced: " << stats.count << "\n";
+
+    // Print queue latency (separate from profiler)
+    if (totalPairsProcessed > 0)
+    {
+        double avg_queue =
+            static_cast<double>(sum_queue_latency_ns) / totalPairsProcessed;
+
         std::cout << "Queue latency (ns): avg=" << avg_queue
             << " min=" << min_queue_latency_ns
             << " max=" << max_queue_latency_ns << "\n";
     }
-    if (totalOutputs > 0) {
-        double avg_proc = static_cast<double>(sum_processing_ns) / totalOutputs;
-        uint64_t min_proc = (min_processing_ns == std::numeric_limits<uint64_t>::max()) ? 0 : min_processing_ns;
-        std::cout << "Processing time (ns, output-based): avg=" << avg_proc
-            << " min=" << min_proc
-            << " max=" << max_processing_ns << "\n";
+
+    // Print processing time from profiler
+    if (stats.count > 0)
+    {
+        std::cout << "Processing time (ns): avg=" << stats.avg_ns
+            << " min=" << stats.min_ns
+            << " max=" << stats.max_ns
+            << " p50=" << stats.median_ns
+            << " p95=" << stats.p95_ns
+            << " p99=" << stats.p99_ns << "\n";
     }
+
+    // Print block execution time and throughput from profiler
+    if (stats.execution_time_ms > 0) {
+        std::cout << "Total block execution time: " << stats.execution_time_ms << " ms\n";
+        std::cout << "Throughput: " << stats.throughput_per_sec << " pairs/sec\n";
+    }
+
+    // Print queue occupancy
+    std::cout << "\nMemory (Queue occupancy):\n";
+    if (queueSizeSampleCount > 0) {
+        double avg_queue_size = static_cast<double>(totalQueueSizeSamples) / queueSizeSampleCount;
+        uint64_t min_qsize = (minQueueSize == std::numeric_limits<uint64_t>::max()) ? 0 : minQueueSize;
+        
+        std::cout << "  Avg queue size: " << avg_queue_size << "\n";
+        std::cout << "  Min queue size: " << min_qsize << "\n";
+        std::cout << "  Max queue size: " << maxQueueSize << "\n";
+        
+        if (queue) {
+            size_t capacity = queue->capacity();
+            double utilization = (avg_queue_size / capacity) * 100.0;
+            std::cout << "  Queue capacity: " << capacity << "\n";
+            std::cout << "  Avg utilization: " << utilization << "%\n";
+        }
+    }
+
     std::cout << "--------------------------------\n";
 }

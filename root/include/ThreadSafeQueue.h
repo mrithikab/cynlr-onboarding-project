@@ -2,13 +2,12 @@
 #include <vector>
 #include <atomic>
 #include <thread>
-#include <chrono>
 #include <cstddef>
-#include <mutex>
-#include <condition_variable>
 
-// Bounded single-producer single-consumer circular queue with spin-then-condition-variable fallback.
-// Supports push/try_push/pop/try_pop, shutdown(), size() and capacity().
+#include "Util.h"
+
+// Bounded single-producer single-consumer lock-free circular queue.
+// Pure spin-based with cpu_relax for efficiency.
 template <typename T>
 class ThreadSafeQueue {
 public:
@@ -23,110 +22,65 @@ public:
         closed.store(false, std::memory_order_relaxed);
     }
 
+    virtual ~ThreadSafeQueue() = default;
+
     ThreadSafeQueue(const ThreadSafeQueue&) = delete;
     ThreadSafeQueue& operator=(const ThreadSafeQueue&) = delete;
 
-    void push(const T& value) {
+    virtual void push(const T& value) {
         if (closed.load(std::memory_order_acquire)) return;
 
         size_t curTail = tail.load(std::memory_order_relaxed);
         size_t nextTail = (curTail + 1) & mask;
 
-        size_t spin = 0;
+        // Spin until space available
         while (nextTail == head.load(std::memory_order_acquire)) {
             if (closed.load(std::memory_order_acquire)) return;
-            if (++spin < 128) {
-                std::this_thread::yield();
-            } else {
-                std::unique_lock<std::mutex> lock(mutex_);
-                not_full_cv_.wait(lock, [&] {
-                    return closed.load(std::memory_order_acquire) ||
-                           (((tail.load(std::memory_order_relaxed) + 1) & mask) != head.load(std::memory_order_acquire));
-                });
-                if (closed.load(std::memory_order_acquire)) return;
-                curTail = tail.load(std::memory_order_relaxed);
-                nextTail = (curTail + 1) & mask;
-                spin = 0;
-            }
+            util::cpu_relax();
         }
 
         buf[curTail] = value;
         tail.store(nextTail, std::memory_order_release);
-
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            not_empty_cv_.notify_one();
-        }
     }
 
-    bool pop(T& out) {
+    virtual bool pop(T& out) {
         size_t curHead = head.load(std::memory_order_relaxed);
 
-        size_t spin = 0;
+        // Spin until data available
         while (curHead == tail.load(std::memory_order_acquire)) {
             if (closed.load(std::memory_order_acquire)) {
                 return false;
             }
-            if (++spin < 128) {
-                std::this_thread::yield();
-            } else {
-                std::unique_lock<std::mutex> lock(mutex_);
-                not_empty_cv_.wait(lock, [&] {
-                    return closed.load(std::memory_order_acquire) || (head.load(std::memory_order_relaxed) != tail.load(std::memory_order_acquire));
-                });
-                if (closed.load(std::memory_order_acquire) && head.load(std::memory_order_relaxed) == tail.load(std::memory_order_acquire)) {
-                    return false;
-                }
-                curHead = head.load(std::memory_order_relaxed);
-                spin = 0;
-            }
+            util::cpu_relax();
         }
 
         out = buf[curHead];
         size_t nextHead = (curHead + 1) & mask;
         head.store(nextHead, std::memory_order_release);
 
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            not_full_cv_.notify_one();
-        }
-
         return true;
     }
 
-    bool try_push(const T& value) {
+    virtual bool try_push(const T& value) {
         if (closed.load(std::memory_order_acquire)) return false;
         size_t curTail = tail.load(std::memory_order_relaxed);
         size_t nextTail = (curTail + 1) & mask;
         if (nextTail == head.load(std::memory_order_acquire)) return false;
         buf[curTail] = value;
         tail.store(nextTail, std::memory_order_release);
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            not_empty_cv_.notify_one();
-        }
         return true;
     }
 
-    bool try_pop(T& out) {
+    virtual bool try_pop(T& out) {
         size_t curHead = head.load(std::memory_order_relaxed);
         if (curHead == tail.load(std::memory_order_acquire)) return false;
         out = buf[curHead];
         head.store((curHead + 1) & mask, std::memory_order_release);
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            not_full_cv_.notify_one();
-        }
         return true;
     }
 
-    void shutdown() {
+    virtual void shutdown() {
         closed.store(true, std::memory_order_release);
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            not_empty_cv_.notify_all();
-            not_full_cv_.notify_all();
-        }
     }
 
     bool isShutdown() const noexcept {
@@ -148,10 +102,5 @@ private:
     size_t mask;
     std::atomic<size_t> head;
     std::atomic<size_t> tail;
-
-    mutable std::mutex mutex_;
-    std::condition_variable not_empty_cv_;
-    std::condition_variable not_full_cv_;
-
     std::atomic<bool> closed;
 };

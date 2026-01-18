@@ -8,7 +8,7 @@ public:
     virtual ~MetricsCollector() = default;
 
     // Record one pair's timestamps and derived metrics.
-    // Added gen_ts_valid to explicitly indicate whether gen_ts_ns is set.
+    
     virtual void recordPair(uint64_t seq,
                             uint64_t gen_ts_ns,
                             bool gen_ts_valid,
