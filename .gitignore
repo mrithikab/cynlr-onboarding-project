@@ -1,26 +1,59 @@
-# Visual Studio
-.vs/
+# Visual Studio 2022
+*.sln
+*.vcxproj
+*.vcxproj.filters
 *.vcxproj.user
-*.user
+.vs/
 *.suo
+*.user
+*.userosscache
+*.sln.docstates
 
-# Build outputs
+# Build directories
+x64/
+x86/
 Debug/
 Release/
-x64/
-bin/
-obj/
-cynlr-on.*/
+[Dd]ebug/
+[Rr]elease/
+[Bb]in/
+[Oo]bj/
 
-# Metrics / profiling outputs
-*.csv
-pair_metrics.csv
-module_profile.csv
+# Compiled files
+*.exe
+*.out
+*.dll
+*.so
+*.dylib
+*.o
+*.obj
+*.pdb
+*.ilk
+*.log
 
-# Temp files
-*.tmp
-TextFile1.txt
+# CMake (if you switch to CMake)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+build/
 
-# OS
+# Test outputs
+TestResults/
+*.trx
+
+# OS files
 .DS_Store
 Thumbs.db
+*.swp
+*~
+
+# IDE files (other than VS)
+.vscode/
+.idea/
+*.code-workspace
+
+# Output files specific to your project
+pair_metrics.csv
+mykernel.txt
+test.csv
