@@ -114,6 +114,13 @@ void DataGenerator::stop() {
     profiler_.stopBlock(util::now_ns());
 }
 
+// Wait for the worker thread to finish (joins if joinable).
+void DataGenerator::wait()
+{
+    if (worker.joinable())
+        worker.join();
+}
+
 // ------------------------------------------------------------
 // Main loop
 // ------------------------------------------------------------

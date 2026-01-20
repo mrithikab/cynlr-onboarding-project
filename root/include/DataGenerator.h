@@ -50,6 +50,9 @@ public:
     // Output interface: emit pairs to queue
     void emit(const DataPair& pair) override;
 
+    // Wait until the internal worker thread finishes (join if joinable)
+    void wait();
+
     // Existing public API (unchanged)
     bool isRunning() const noexcept { return running.load(std::memory_order_acquire); }
 

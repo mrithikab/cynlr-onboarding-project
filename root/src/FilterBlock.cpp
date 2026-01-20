@@ -190,6 +190,11 @@ void FilterBlock::flushWithZeros()
 
 void FilterBlock::run()
 {
+    // Pre-fill buffer with zeros to avoid losing 1st 4 pairs
+    for (int i = 0; i < TAPS-1; ++i) {  
+        pushSample(0.0);
+    }
+    
     ready.store(true, std::memory_order_release);
 
     while (true)
@@ -203,12 +208,6 @@ void FilterBlock::run()
                 return;
             }
             util::cpu_relax();
-        }
-
-        if (pair.seq == std::numeric_limits<uint64_t>::max())
-        {
-            flushWithZeros();
-            break;
         }
 
         size_t qsize = queue->size();
@@ -274,32 +273,28 @@ void FilterBlock::run()
 void FilterBlock::printStats() const
 {
     std::cout << "---- FilterBlock statistics ----\n";
-    std::cout << "Pairs processed:  " << totalPairsProcessed << "\n";
     
-    // Get profiler stats
     auto stats = profiler_.getStats();
-    std::cout << "Outputs produced: " << stats.count << "\n";
+    std::cout << "Output pairs produced: " << stats.count << "\n";
 
-    // Print queue latency (separate from profiler)
+    // Queue latency (uses totalPairsProcessed internally)
     if (totalPairsProcessed > 0)
     {
-        double avg_queue =
-            static_cast<double>(sum_queue_latency_ns) / totalPairsProcessed;
-
+        double avg_queue = static_cast<double>(sum_queue_latency_ns) / totalPairsProcessed;
         std::cout << "Queue latency (ns): avg=" << avg_queue
-            << " min=" << min_queue_latency_ns
-            << " max=" << max_queue_latency_ns << "\n";
+                  << " min=" << min_queue_latency_ns
+                  << " max=" << max_queue_latency_ns << "\n";
     }
 
-    // Print processing time from profiler
+    // Processing time (uses stats.count from profiler)
     if (stats.count > 0)
     {
         std::cout << "Processing time (ns): avg=" << stats.avg_ns
-            << " min=" << stats.min_ns
-            << " max=" << stats.max_ns
-            << " p50=" << stats.median_ns
-            << " p95=" << stats.p95_ns
-            << " p99=" << stats.p99_ns << "\n";
+                  << " min=" << stats.min_ns
+                  << " max=" << stats.max_ns
+                  << " p50=" << stats.median_ns
+                  << " p95=" << stats.p95_ns
+                  << " p99=" << stats.p99_ns << "\n";
     }
 
     // Print block execution time and throughput from profiler

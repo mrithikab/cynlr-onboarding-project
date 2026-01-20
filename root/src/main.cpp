@@ -40,7 +40,7 @@ static bool parseArgs(int argc, char** argv, Config& config)
 
         auto hasPrefix = [&](const std::string& p) {
             return arg.size() > p.size() - 1 && arg.compare(0, p.size(), p) == 0;
-        };
+            };
 
         try {
             if (hasPrefix("--mode=")) {
@@ -128,7 +128,8 @@ int main(int argc, char** argv) {
         if (!config.quiet) {
             std::cout << "Detected columns (m) = " << config.columns << "\n";
         }
-    } else if (config.columns <= 0) {
+    }
+    else if (config.columns <= 0) {
         std::cout << "Enter columns (m): ";
         std::cin >> config.columns;
     }
@@ -152,13 +153,12 @@ int main(int argc, char** argv) {
 
     // Wait for completion
     if (config.mode == InputMode::CSV) {
-        // Wait for generator to finish naturally
         if (ctx.generator) {
-            while (ctx.generator->isRunning()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
+            // Wait for generator to finish instead of polling
+            ctx.generator->wait();
         }
-    } else {
+    }
+    else {
         // Random mode: wait for user input
         if (std::cin.rdbuf()->in_avail() > 0 && std::cin.peek() == '\n') {
             std::cin.get();
@@ -166,10 +166,8 @@ int main(int argc, char** argv) {
         std::string dummy;
         std::getline(std::cin, dummy);
 
-        // Signal shutdown
-        DataPair sentinel{};
-        sentinel.seq = std::numeric_limits<uint64_t>::max();
-        queue.push(sentinel);
+        // Signal shutdown 
+        queue.shutdown();
     }
 
     if (!config.quiet) {
