@@ -1,0 +1,4 @@
+module,metric,count,avg_ns,min_ns,max_ns,median_ns
+"DataGenerator.produce",timing,1738685,88,0,168600,100
+"FilterBlock.process_sample",timing,3477364,61,0,319400,100
+"startup_probe",counter,1,,,,

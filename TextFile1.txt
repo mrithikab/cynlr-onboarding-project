@@ -1,0 +1,69 @@
+//DataGenerator_fast.cpp
+#include <random>
+#include <chrono>
+#include <thread>
+#include "FilterBlock_fast.cpp"
+
+using namespace std;
+
+int main() {
+    const int m = 100000;
+    const double TV = 400.0;
+    const int T_ns = 1000;
+
+    FilterBlockFast filter(TV);
+
+    random_device rd;
+    mt19937 gen(rd());
+    uniform_int_distribution<int> dist(0,1023);
+
+    for (int i = 0; i < m/2; i++) {
+        double a = dist(gen);
+        double b = dist(gen);
+
+        // BOTH pixels processed back-to-back here
+        filter.processPair(a, b);
+
+        this_thread::sleep_for(chrono::nanoseconds(T_ns));
+    }
+}
+
+//FilterBlock_fast.cpp
+#include <vector>
+
+constexpr double FILTER[9] = {
+    0.00025177, 0.008666992, 0.078025818,
+    0.24130249, 0.343757629, 0.24130249,
+    0.078025818, 0.008666992, 0.000125885
+};
+
+class FilterBlockFast {
+public:
+    explicit FilterBlockFast(double tv) : TV(tv) {
+        buffer.assign(9,0.0);
+    }
+
+    inline void processPair(double a, double b) {
+        process(a);
+        process(b);   // < 100 ns apart (same call, no blocking)
+    }
+
+private:
+    double buffer[9];
+    int idx = 0;
+    double TV;
+
+    inline void process(double v) {
+        buffer[idx] = v;
+        idx = (idx + 1) % 9;
+
+        double sum = 0.0;
+        #pragma unroll
+        for (int i = 0; i < 9; i++)
+            sum += buffer[(idx+i)%9] * FILTER[i];
+
+        volatile int out = (sum >= TV); // prevent optimization removal
+        (void)out;
+    }
+};
+

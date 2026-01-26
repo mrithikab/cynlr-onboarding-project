@@ -142,6 +142,7 @@
     </ClCompile>
     <ClCompile Include="root\src\metrics\FileMetricsCollector.cpp" />
     <ClCompile Include="root\src\metrics\NoopMetricsCollector.cpp" />
+    <ClCompile Include="root\src\Pipeline.cpp" />
     <ClCompile Include="root\src\stream\CsvStreamer.cpp" />
   </ItemGroup>
   <ItemGroup>
