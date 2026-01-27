@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <vector>
 #include <cstdint>
 #include "DataGenerator.h" // for InputMode
 
@@ -23,7 +24,7 @@ struct Config {
     std::string filterFile = "";
 
     // Pipeline configuration
-    bool enableFilter = true;
+    std::vector<std::string> pipelineBlocks = {"filter"};  // Default pipeline
 
     // Metrics and profiling
     bool stats = false;

@@ -21,6 +21,7 @@ static void printUsage()
         << "  --T_ns=<uint64>\n"
         << "  --columns=<int>\n"
         << "  --filter=default|file\n"
+        << "  --pipeline=<block1,block2,...>  (available blocks: filter)[Note: DataGenerator is always present as the source block] \n"
         << "  --stats | --stats=on|1|true\n"
         << "  --csv=<path>\n"
         << "  --filterfile=<path>\n"
@@ -63,6 +64,40 @@ static bool parseArgs(int argc, char** argv, Config& config)
                 if (v == "default") config.filter = FilterType::DEFAULT;
                 else if (v == "file") config.filter = FilterType::FILE;
                 else { std::cerr << "Unknown filter: " << v << "\n"; return false; }
+            }
+            else if (hasPrefix("--pipeline=")) {
+                std::string v = arg.substr(11);
+                config.pipelineBlocks.clear();
+                
+                // Parse comma-separated blocks: "filter,transform,aggregator"
+                if (v.empty()) {
+                    std::cerr << "Error: --pipeline requires at least one block name\n";
+                    return false;
+                }
+                
+                size_t start = 0;
+                while (start < v.size()) {
+                    size_t end = v.find(',', start);
+                    if (end == std::string::npos) {
+                        end = v.size();
+                    }
+                    
+                    std::string blockName = v.substr(start, end - start);
+                    // Trim whitespace
+                    blockName.erase(0, blockName.find_first_not_of(" \t"));
+                    blockName.erase(blockName.find_last_not_of(" \t") + 1);
+                    
+                    if (!blockName.empty()) {
+                        config.pipelineBlocks.push_back(blockName);
+                    }
+                    
+                    start = end + 1;
+                }
+                
+                if (config.pipelineBlocks.empty()) {
+                    std::cerr << "Error: --pipeline must contain at least one valid block name\n";
+                    return false;
+                }
             }
             else if (arg == "--stats") {
                 config.stats = true;

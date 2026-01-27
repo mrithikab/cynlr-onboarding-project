@@ -21,23 +21,34 @@ PipelineContext buildPipeline(const Config& config,
     ctx.generator = gen.get(); // store pointer before moving ownership
     ctx.pipeline.addBlock(std::move(gen));
 
-    // Conditionally add FilterBlock
-    if (config.enableFilter) {
-        bool useFileKernel = (config.filter == FilterType::FILE);
-        auto filter = std::make_unique<FilterBlock>(
-            config.columns,
-            config.threshold,
-            queue,
-            metrics,
-            useFileKernel,
-            config.filterFile
-        );
-        ctx.pipeline.addBlock(std::move(filter));
+    // Add blocks based on pipeline configuration
+    for (const auto& blockName : config.pipelineBlocks) {
+        if (blockName == "filter") {
+            bool useFileKernel = (config.filter == FilterType::FILE);
+            auto filter = std::make_unique<FilterBlock>(
+                config.columns,
+                config.threshold,
+                queue,
+                metrics,
+                useFileKernel,
+                config.filterFile
+            );
+            ctx.pipeline.addBlock(std::move(filter));
+        }
+        // Future blocks will go here:
+        // else if (blockName == "transform") {
+        //     auto transform = std::make_unique<TransformBlock>(...);
+        //     ctx.pipeline.addBlock(std::move(transform));
+        // }
+        // else if (blockName == "aggregator") {
+        //     auto aggregator = std::make_unique<AggregatorBlock>(...);
+        //     ctx.pipeline.addBlock(std::move(aggregator));
+        // }
+        else {
+            std::cerr << "[Pipeline] Warning: Unknown block type '" << blockName 
+                      << "' - skipping\n";
+        }
     }
-
-    // Future: Add more blocks here based on config flags
-    // if (config.enableTransform) { ctx.pipeline.addBlock(...); }
-    // if (config.enableAggregator) { ctx.pipeline.addBlock(...); }
 
     return ctx;
 }

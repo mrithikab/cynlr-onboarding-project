@@ -142,9 +142,12 @@
     </ClCompile>
     <ClCompile Include="root\src\metrics\FileMetricsCollector.cpp" />
     <ClCompile Include="root\src\metrics\NoopMetricsCollector.cpp" />
+    <ClCompile Include="root\src\Pipeline.cpp" />
     <ClCompile Include="root\src\stream\CsvStreamer.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="root\include\Block.h" />
+    <ClInclude Include="root\include\Config.h" />
     <ClInclude Include="root\include\DataGenerator.h" />
     <ClInclude Include="root\include\FilterBlock.h" />
     <ClInclude Include="root\include\metrics\MetricsCollector.h" />

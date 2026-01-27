@@ -29,6 +29,9 @@
     </ClCompile>
     <ClCompile Include="root\src\metrics\FileMetricsCollector.cpp" />
     <ClCompile Include="root\src\metrics\NoopMetricsCollector.cpp" />
+    <ClCompile Include="root\src\Pipeline.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="root\include\DataGenerator.h">
@@ -44,6 +47,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="root\include\metrics\MetricsCollector.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="root\include\Config.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="root\include\Block.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
